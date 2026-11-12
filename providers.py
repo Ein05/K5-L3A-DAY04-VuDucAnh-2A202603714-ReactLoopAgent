@@ -9,19 +9,39 @@ CONFIG = {
     'gemini': ('GEMINI_API_KEY', 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'),
     'openrouter': ('OPENROUTER_API_KEY', 'https://openrouter.ai/api/v1/chat/completions'),
     'anthropic': ('ANTHROPIC_API_KEY', 'https://api.anthropic.com/v1/messages'),
+    'groq': ('GROQ_API_KEY', 'https://api.groq.com/openai/v1/chat/completions'),
 }
 
 
 def post_json(url, headers, payload):
-    req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json', **headers})
-    try:
-        with urllib.request.urlopen(req, timeout=60) as response:
-            return json.load(response)
-    except urllib.error.HTTPError as exc:
-        # Do not print response bodies: they may contain account or request data.
-        raise RuntimeError(f'Provider trả HTTP {exc.code}; kiểm tra model, key và quota.') from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f'Không kết nối được provider: {exc.reason}') from exc
+    import time
+    default_headers = {'Content-Type': 'application/json', 'User-Agent': 'StatusAgentLab/1.0'}
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={**default_headers, **headers})
+    for attempt in range(8):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 and attempt < 7:
+                wait_time = 12.0
+                if exc.headers.get('retry-after'):
+                    try:
+                        wait_time = float(exc.headers['retry-after']) + 1.0
+                    except ValueError:
+                        pass
+                else:
+                    reset_tok = exc.headers.get('x-ratelimit-reset-tokens', '')
+                    if reset_tok.endswith('s') and not reset_tok.endswith('ms'):
+                        try:
+                            wait_time = float(reset_tok[:-1]) + 1.0
+                        except ValueError:
+                            pass
+                print(f" [Đang chờ {int(wait_time)}s để hồi quota...]", flush=True)
+                time.sleep(max(wait_time, 5.0))
+                continue
+            raise RuntimeError(f'Provider trả HTTP {exc.code}; kiểm tra model, key và quota.') from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f'Không kết nối được provider: {exc.reason}') from exc
 
 
 class Provider:
